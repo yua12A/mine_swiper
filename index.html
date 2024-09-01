@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>マインスイーパー</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+        }
+        h1 {
+            margin-bottom: 20px;
+        }
+        #minefield {
+            display: grid;
+            grid-template-columns: repeat(10, 40px);
+            grid-gap: 2px;
+            margin: 0 auto;
+            max-width: 420px;
+        }
+        .cell {
+            width: 40px;
+            height: 40px;
+            background-color: #ddd;
+            border: 1px solid #999;
+            font-size: 20px;
+            font-weight: bold;
+            line-height: 40px;
+            text-align: center;
+            cursor: pointer;
+            user-select: none;
+        }
+        .mine {
+            background-color: #f00;
+        }
+        .revealed {
+            background-color: #bbb;
+            cursor: default;
+        }
+        .flagged {
+            background-color: #ff0;
+        }
+        #controls {
+            margin-top: 20px;
+        }
+        button {
+            margin: 5px;
+            padding: 10px 20px;
+            font-size: 16px;
+        }
+        #previousResultsTable {
+            margin-top: 20px;
+            display: none;
+        }
+        table {
+            width: 50%;
+            margin: 20px auto;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 10px;
+            border: 1px solid #bbb;
+            text-align: center;
+        }
+        th {
+            background-color: #00AC9A;
+        }
+    </style>
+</head>
+<body>
+    <h1>マインスイーパー</h1>
+    <p>マインスイーパーのグリッドをクリックして、地雷を避けてください。</p>
+    <div id="minefield"></div>
+    
+    <div id="controls">
+        <button onclick="restartGame()">リスタート</button>
+        <button onclick="resetGame()">リセット</button>
+        <button onclick="showHint()">ヒント</button>
+        <button onclick="showPreviousResults()">過去の結果を表示</button>
+    </div>
+
+    <h2>過去のゲーム結果</h2>
+    <table id="previousResultsTable">
+        <thead>
+            <tr>
+                <th>ゲーム回数</th>
+                <th>結果</th>
+                <th>試行回数</th>
+            </tr>
+        </thead>
+        <tbody id="previousResultBody">
+            <!-- 過去のゲーム結果がここに表示されます -->
+        </tbody>
+    </table>
+
+    <script>
+        const rows = 10;
+        const cols = 10;
+        const mineCount = 20;
+        let minefield = [];
+        let gameOver = false;
+        let attempts = 0;
+        let previousResults = JSON.parse(localStorage.getItem('previousResults')) || [];
+
+        function initGame() {
+            minefield = [];
+            gameOver = false;
+            attempts = 0;
+            const minefieldDiv = document.getElementById('minefield');
+            minefieldDiv.innerHTML = '';
+            minefieldDiv.style.gridTemplateColumns = `repeat(${cols}, 40px)`;
+
+            for (let i = 0; i < rows; i++) {
+                minefield[i] = [];
+                for (let j = 0; j < cols; j++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    cell.dataset.row = i;
+                    cell.dataset.col = j;
+                    cell.addEventListener('click', revealCell);
+                    cell.addEventListener('contextmenu', flagCell);
+                    minefieldDiv.appendChild(cell);
+                    minefield[i][j] = {
+                        mine: false,
+                        revealed: false,
+                        flagged: false,
+                        adjacentMines: 0
+                    };
+                }
+            }
+
+            placeMines();
+            calculateAdjacentMines();
+        }
+
+        function placeMines() {
+            let placedMines = 0;
+            while (placedMines < mineCount) {
+                const row = Math.floor(Math.random() * rows);
+                const col = Math.floor(Math.random() * cols);
+                if (!minefield[row][col].mine) {
+                    minefield[row][col].mine = true;
+                    placedMines++;
+                }
+            }
+        }
+
+        function calculateAdjacentMines() {
+            for (let i = 0; i < rows; i++) {
+                for (let j = 0; j < cols; j++) {
+                    if (!minefield[i][j].mine) {
+                        minefield[i][j].adjacentMines = countAdjacentMines(i, j);
+                    }
+                }
+            }
+        }
+
+        function countAdjacentMines(row, col) {
+            let count = 0;
+            for (let i = -1; i <= 1; i++) {
+                for (let j = -1; j <= 1; j++) {
+                    const r = row + i;
+                    const c = col + j;
+                    if (r >= 0 && r < rows && c >= 0 && c < cols && minefield[r][c].mine) {
+                        count++;
+                    }
+                }
+            }
+            return count;
+        }
+
+        function revealCell(e) {
+            if (gameOver) return;
+            const cell = e.target;
+            const row = parseInt(cell.dataset.row);
+            const col = parseInt(cell.dataset.col);
+            if (minefield[row][col].revealed || minefield[row][col].flagged) return;
+
+            minefield[row][col].revealed = true;
+            cell.classList.add('revealed');
+            attempts++;
+
+            if (minefield[row][col].mine) {
+                cell.classList.add('mine');
+                alert('ゲームオーバー！地雷を踏みました。');
+                gameOver = true;
+                revealAllMines();
+                saveResult('敗北');
+            } else {
+                cell.textContent = minefield[row][col].adjacentMines || '';
+                if (minefield[row][col].adjacentMines === 0) {
+                    revealAdjacentCells(row, col);
+                }
+                if (checkWin()) {
+                    alert('おめでとうございます！ 全ての地雷を避けました。');
+                    gameOver = true;
+                    saveResult('勝利');
+                }
+            }
+        }
+
+        function revealAdjacentCells(row, col) {
+            for (let i = -1; i <= 1; i++) {
+                for (let j = -1; j <= 1; j++) {
+                    const r = row + i;
+                    const c = col + j;
+                    if (r >= 0 && r < rows && c >= 0 && c < cols) {
+                        if (!minefield[r][c].revealed && !minefield[r][c].mine) {
+                            const cell = document.querySelector(`[data-row="${r}"][data-col="${c}"]`);
+                            revealCell({target: cell});
+                        }
+                    }
+                }
+            }
+        }
+
+        function revealAllMines() {
+            for (let i = 0; i < rows; i++) {
+                for (let j = 0; j < cols; j++) {
+                    if (minefield[i][j].mine) {
+                        const cell = document.querySelector(`[data-row="${i}"][data-col="${j}"]`);
+                        cell.classList.add('mine');
+                    }
+                }
+            }
+        }
+
+        function flagCell(e) {
+            e.preventDefault();
+            if (gameOver) return;
+            const cell = e.target;
+            const row = parseInt(cell.dataset.row);
+            const col = parseInt(cell.dataset.col);
+            if (minefield[row][col].revealed) return;
+
+            minefield[row][col].flagged = !minefield[row][col].flagged;
+            cell.classList.toggle('flagged');
+        }
+
+        function restartGame() {
+            if (confirm('リスタートしますか？ 現在のゲーム結果は失われます。')) {
+                initGame();
+            }
+        }
+
+        function resetGame() {
+            if (confirm('リセットしますか？ 全てのゲーム結果が消去されます。')) {
+                localStorage.clear();
+                previousResults = [];
+                initGame();
+            }
+        }
+
+        function showHint() {
+            if (gameOver) return;
+            let hintFound = false;
+            for (let i = 0; i < rows; i++) {
+                for (let j = 0; j < cols; j++) {
+                    if (!minefield[i][j].revealed && !minefield[i][j].mine && !minefield[i][j].flagged) {
+                        const cell = document.querySelector(`[data-row="${i}"][data-col="${j}"]`);
+                        alert(`ヒント: (${i+1}, ${j+1})のセルを試してみてください。`);
+                        hintFound = true;
+                        return;
+                    }
+                }
+            }
+            if (!hintFound) {
+                alert('ヒントが見つかりません。');
+            }
+        }
+
+        function checkWin() {
+            let cellsToReveal = 0;
+            for (let i = 0; i < rows; i++) {
+                for (let j = 0; j < cols; j++) {
+                    if (!minefield[i][j].revealed && !minefield[i][j].mine) {
+                        cellsToReveal++;
+                    }
+                }
+            }
+            return cellsToReveal === 0;
+        }
+
+        function saveResult(result) {
+            const gameResult = {
+                gameNumber: previousResults.length + 1,
+                result: result,
+                attempts: attempts
+            };
+            previousResults.push(gameResult);
+            localStorage.setItem('previousResults', JSON.stringify(previousResults));
+            showPreviousResults();
+        }
+
+        function showPreviousResults() {
+            const tableBody = document.getElementById('previousResultBody');
+            tableBody.innerHTML = '';
+            previousResults.forEach(game => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${game.gameNumber}</td>
+                    <td>${game.result}</td>
+                    <td>${game.attempts}</td>
+                `;
+                tableBody.appendChild(row);
+            });
+            document.getElementById('previousResultsTable').style.display = 'table';
+        }
+
+        window.onload = function() {
+            initGame();
+            showPreviousResults();
+        };
+    </script>
+</body>
+</html>
